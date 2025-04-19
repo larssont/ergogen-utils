@@ -105,7 +105,7 @@ try {
 }
 
 # STL generation
-Write-Host "`n✅ Build successful. Proceeding with STL generation..." -ForegroundColor Green
+Write-Host "✅ Build successful. Proceeding with STL conversion..." -ForegroundColor Green
 
 # Define directories based on the provided or default project path
 $casesDir = Join-Path $outDir "cases"
@@ -129,31 +129,59 @@ if ($LASTEXITCODE -ne 0) {
     } catch {
         Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Yellow
         Write-Error "❌ Installation of $jscad failed."
+        exit 1
     }
 }
+
+# Store jobs along with their part names
+$jobList = @()
 
 # Convert .jscad files to .stl in parallel
 Write-Host "`n🌀 Processing .jscad files in parallel..."
 
-$jobs = @()
-
 Get-ChildItem $casesDir -Filter "*.jscad" | ForEach-Object {
-    $inputFile  = $_.FullName
-    $outputFile = Join-Path $stlDir "$($_.BaseName).stl"
+    $input  = $_.FullName
+    $output = Join-Path $stlDir "$($_.BaseName).stl"
+    $name   = $_.Name
 
-    Write-Host "🛠️  Queuing $($_.Name) for parallel conversion..."
+    Write-Host "🛠️  Queuing: $name ➜ $($_.BaseName).stl"
 
-    $jobs += Start-Job -ScriptBlock {
-        npx @jscad/cli@1 $using:inputFile -o $using:outputFile -of stla
+    $job = Start-Job -ScriptBlock {
+        & npx @jscad/cli@1 $using:input -o $using:output -of stla 2>&1
+    }
+
+    $jobList += [PSCustomObject]@{
+        Job  = $job
+        Name = $name
     }
 }
 
-# Wait for all parallel jobs to complete
 Write-Host "⏳ Waiting for conversions to finish..."
-$jobs | ForEach-Object { 
-    Wait-Job $_ | Out-Null
-    Receive-Job $_
-    Remove-Job $_
+
+$failedJobs = @()
+
+foreach ($entry in $jobList) {
+    $job = $entry.Job
+    $name = $entry.Name
+
+    Wait-Job $job | Out-Null
+    $output = Receive-Job $job
+    Remove-Job $job
+
+    if ($output -match "Error|Exception|Failed|self intersecting") {
+        Write-Host "`n❌ $name failed to convert" -ForegroundColor Red
+        Write-Host "   ↳ Details:" -ForegroundColor DarkRed
+        Write-Host ("   " + ($output -join "`n   "))
+        $failedJobs += $name
+    }
 }
 
-Write-Host "`n🎉 All files processed successfully!" -ForegroundColor Green
+if ($failedJobs.Count -gt 0) {
+    Write-Host "`n🚨 Failed conversions:" -ForegroundColor Red
+    foreach ($f in $failedJobs) {
+        Write-Host " - $f"
+    }
+    exit 1
+}
+
+Write-Host "`n🎉 All files converted successfully!" -ForegroundColor Green
