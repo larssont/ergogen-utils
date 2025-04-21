@@ -14,8 +14,8 @@ Specifies the root directory of the Ergogen project to build. Defaults to the gr
 .PARAMETER outDir
 Directory where build output will be placed. Defaults to `output` inside the project directory. Alias: -o
 
-.PARAMETER debug
-Adds the `--debug` flag to the Ergogen build command for verbose output. Alias: -d
+.PARAMETER dev
+Adds the `--debug` flag to the Ergogen build command. Alias: -d
 
 .PARAMETER clean
 Adds the `--clean` flag to remove any existing output before building.
@@ -27,7 +27,7 @@ Creates a backup of the project’s output and YAML files as a `.zip` file, save
 Specifies an optional directory for the backup. If provided, it triggers the backup process, and the `.zip` file will be saved in this directory.
 
 .EXAMPLE
-.\build.ps1 -p "C:\Keyboards\MyKeyboard" -o "C:\Keyboards\MyKeyboard\out" -debug -clean
+.\build.ps1 -p "C:\Keyboards\MyKeyboard" -o "C:\Keyboards\MyKeyboard\out" -dev -clean
 
 .EXAMPLE
 .\build.ps1 -cliPath "C:\Tools\ergogen\source\cli.js"
@@ -66,7 +66,8 @@ param (
 
     [Parameter()]
     [Alias("d")]
-    [switch]$debug,
+    [switch]$dev,
+
     [Parameter()]
     [Alias("b")]
     [switch]$backup,
@@ -133,7 +134,7 @@ if (-not (Test-Path $projectDir)) {
 $args = @()
 if ($cliPath) { $args += $cliPath}
 if ($outDir) { $args += "-o"; $args += $outDir }
-if ($debug)  { $args += "--debug" }
+if ($dev)  { $args += "--debug" }
 if ($clean)  { $args += "--clean" }
 $args += $projectDir
 
