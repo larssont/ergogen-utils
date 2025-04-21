@@ -1,16 +1,15 @@
 <#
 .SYNOPSIS
-Builds an Ergogen project and converts generated .jscad files to .stl format.
+Builds an Ergogen project and converts generated .jscad files to .stl format. Optionally, backs up project data before building.
 
 .DESCRIPTION
-This script automates the process of building an Ergogen project using either the installed `ergogen` CLI or a specified path to a Node.js-based CLI. 
-It supports optional cleaning and debugging flags. After building, it looks for `.jscad` files in the output and converts them to `.stl` files using `@jscad/cli`.
+This script automates the process of building an Ergogen project using either the installed `ergogen` CLI or a specified path to a Node.js-based CLI. It supports optional flags for cleaning, debugging, and backing up project data. After building, the script searches for `.jscad` files in the output directory and converts them to `.stl` files using the `@jscad/cli` package.
 
 .PARAMETER cliPath
-Optional path to the Node.js CLI script (e.g., `src/cli.js`). If provided, the script runs using `node` with this file. If not, it attempts to use the globally installed `ergogen` command.
+Path to the Node.js CLI script (e.g., `src/cli.js`). If provided, the script will run using `node` with this file. If not provided, it attempts to use the globally installed `ergogen` command.
 
 .PARAMETER projectDir
-Specifies the root directory of the Ergogen project to build. Defaults to the grandparent of the script’s location (../../). Alias: -p
+Specifies the root directory of the Ergogen project to build. Defaults to the grandparent directory of the script’s location (../../). Alias: -p
 
 .PARAMETER outDir
 Directory where build output will be placed. Defaults to `output` inside the project directory. Alias: -o
@@ -21,35 +20,110 @@ Adds the `--debug` flag to the Ergogen build command for verbose output. Alias: 
 .PARAMETER clean
 Adds the `--clean` flag to remove any existing output before building.
 
+.PARAMETER backup
+Creates a backup of the project’s output and YAML files as a `.zip` file, saved in the default `backups` folder inside the project directory. Alias: -b
+
+.PARAMETER backupDir
+Specifies an optional directory for the backup. If provided, it triggers the backup process, and the `.zip` file will be saved in this directory.
+
 .EXAMPLE
 .\build.ps1 -p "C:\Keyboards\MyKeyboard" -o "C:\Keyboards\MyKeyboard\out" -debug -clean
 
 .EXAMPLE
 .\build.ps1 -cliPath "C:\Tools\ergogen\source\cli.js"
 
+.EXAMPLE
+.\build.ps1 -p "C:\Keyboards\MyKeyboard" -backupDir "C:\Keyboards\MyKeyboard\backups"
+
 .NOTES
+- Most parameters are optional. The script will default to sensible defaults if parameters are not provided:
+  - `cliPath` defaults to using the globally installed `ergogen` command.
+  - `projectDir` defaults to the grandparent directory of the script’s location.
+  - `outDir` defaults to an `output` folder inside the project directory.
+  - `backupDir` defaults to a `backups` folder inside the project directory if `backup` is specified but no directory is provided.
 - Requires `ergogen` or a valid CLI path to be available.
 - Automatically installs `@jscad/cli@1.10` globally if not found.
 - Uses PowerShell jobs to convert `.jscad` files to `.stl` in parallel.
 
 #>
 
+
+[CmdletBinding()]
 param (
+    [Parameter(Mandatory = $true)]
     [string]$cliPath,
 
+    [Parameter()]
     [Alias("p")]
-    [string]$projectDir = (Resolve-Path (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "..\..")),
+    [string]$projectDir = (Resolve-Path (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "..\..")).Path,
 
+    [Parameter()]
     [Alias("o")]
-    [string]$outDir = "$projectDir\output",
+    [string]$outDir,
 
+    [Parameter()]
+    [string]$clean
+
+    [Parameter()]
     [Alias("d")]
     [switch]$debug,
+    [Parameter()]
+    [Alias("b")]
+    [switch]$backup,
 
-    [switch]$clean
+    [Parameter()]
+    [string]$backupDir
 )
 
-# Validate that the project path exists
+function Write-Indented {
+    param (
+        [Parameter(Position = 0, Mandatory = $true)]
+        [string]$msg,
+
+        [Parameter(Position = 1)]
+        [int]$level = 1,
+
+        [Parameter(Position = 2)]
+        [string]$color = "White"
+    )
+
+    $indentation = " " * ($level * 4)  # 4 spaces per level of indentation
+
+    Write-Host $indentation$msg -ForegroundColor $color
+}
+
+# Create an in-memory module so $ScriptBlock doesn't run in new scope
+$null = New-Module {
+    function Invoke-WithoutProgress {
+        [CmdletBinding()]
+        param (
+            [Parameter(Mandatory)] [scriptblock] $ScriptBlock
+        )
+
+        # Save current progress preference and hide the progress
+        $prevProgressPreference = $global:ProgressPreference
+        $global:ProgressPreference = 'SilentlyContinue'
+
+        try {
+            # Run the script block in the scope of the caller of this module function
+            . $ScriptBlock
+        }
+        finally {
+            # Restore the original behavior
+            $global:ProgressPreference = $prevProgressPreference
+        }
+    }
+}
+
+$doBackup = $backup -or $backupDir
+# Set backupDir to projectDir\backups if not provided
+$backupDir = if ($backupDir) { $backupDir } else { Join-Path $projectDir "backups" }
+
+# Set outDir if not provided
+if (-not $outDir) {
+    $outDir = Join-Path $projectDir "output"
+}
+
 if (-not (Test-Path $projectDir)) {
     Write-Error "❌ Project path not found: $projectDir"
     exit 1
@@ -76,6 +150,52 @@ $cmd = if ($cliPath) {
         exit 1
     }
     "ergogen"
+}
+
+if ($doBackup) {
+    $timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
+    $backupFile = Join-Path $backupDir "$timestamp.zip"
+    $tempBackup = Join-Path $env:TEMP "ergogen-backup-$timestamp"
+
+    Write-Host "📦 Backing up project to $backupFile" -ForegroundColor Cyan
+
+    # Create directory if needed
+    if (-not (Test-Path $backupDir)) {
+        Write-Indented "📁 Creating backup directory at $backupDir..."
+        New-Item -ItemType Directory -Path $backupDir | Out-Null
+    }
+
+    # Create a temporary backup directory
+    New-Item -ItemType Directory -Path $tempBackup | Out-Null
+
+    try {
+        # Copy output directory to temporary backup folder
+        Write-Indented "📨 Copying output directory..."
+        Copy-Item -Path $outDir -Destination (Join-Path $tempBackup "output") -Recurse -Force
+
+        # Backup all YAML files in projectDir to the root of the backup
+        $yamlFiles = Get-ChildItem -Path $projectDir -Filter "*.yaml" -File
+        if ($yamlFiles.Count -gt 0) {
+            Write-Indented "📨 Copying YAML files..."
+            foreach ($file in $yamlFiles) {
+                Copy-Item -Path $file.FullName -Destination $tempBackup -Force
+            }
+        }
+
+        Write-Indented "🗜️  Compressing backup..."
+        Invoke-WithoutProgress {
+            Compress-Archive -Path (Join-Path $tempBackup "*") -DestinationPath $backupFile -Force 
+        }
+        
+    } catch {
+        Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "❌ Backup failed." -ForegroundColor Red
+        exit 1
+    } finally {
+        Remove-Item -Path $tempBackup -Recurse -Force
+    }
+
+    Write-Host "✅ Backup complete."
 }
 
 # Suppress Node.js warnings
