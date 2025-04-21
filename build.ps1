@@ -61,7 +61,7 @@ param (
     [string]$outDir,
 
     [Parameter()]
-    [string]$clean
+    [switch]$clean,
 
     [Parameter()]
     [Alias("d")]
