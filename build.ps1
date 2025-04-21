@@ -207,7 +207,7 @@ if ($doBackup) {
 $env:NODE_NO_WARNINGS = "1"
 
 # Build the project
-Write-Host "`n🔨 Starting build process: $cmd $($args -join ' ')" -ForegroundColor Cyan
+Write-Host "`n🚀 Starting build process: $cmd $($args -join ' ')" -ForegroundColor Cyan
 
 try {
     $lastLine = ""
@@ -229,16 +229,17 @@ try {
     exit 1
 }
 
-# STL generation
-Write-Host "✅ Build successful. Proceeding with STL conversion..." -ForegroundColor Green
+Write-Host "✅ Build successful." -ForegroundColor Green
 
-# Define directories based on the provided or default project path
+# Define directories based on the output directory
 $casesDir = Join-Path $outDir "cases"
 $stlDir = Join-Path $casesDir "stl"
 
+Write-Host "`n💾 Converting .jscad files to STLs" -ForegroundColor Cyan
+
 # Ensure the STL directory exists
 if (-not (Test-Path -Path $stlDir)) {
-    Write-Host "📁 Creating STL directory at $stlDir..."
+    Write-Host "    📁 Creating STL directory at $stlDir..."
     New-Item -ItemType Directory -Path $stlDir | Out-Null
 }
 
@@ -262,14 +263,14 @@ if ($LASTEXITCODE -ne 0) {
 $jobList = @()
 
 # Convert .jscad files to .stl in parallel
-Write-Host "`n🌀 Processing .jscad files in parallel..."
+Write-Indented "🌀 Processing .jscad files in parallel"
 
 Get-ChildItem $casesDir -Filter "*.jscad" | ForEach-Object {
     $input  = $_.FullName
     $output = Join-Path $stlDir "$($_.BaseName).stl"
     $name   = $_.Name
 
-    Write-Host "🛠️  Queuing: $name ➜ $($_.BaseName).stl"
+    Write-Indented "🛠️  Queuing: $name ➜ $($_.BaseName).stl" 2
 
     $job = Start-Job -ScriptBlock {
         & npx @jscad/cli@1 $using:input -o $using:output -of stla 2>&1
@@ -281,7 +282,7 @@ Get-ChildItem $casesDir -Filter "*.jscad" | ForEach-Object {
     }
 }
 
-Write-Host "⏳ Waiting for conversions to finish..."
+Write-Indented "⏳ Waiting for conversions to finish..." 2
 
 $failedJobs = @()
 
@@ -293,10 +294,11 @@ foreach ($entry in $jobList) {
     $output = Receive-Job $job
     Remove-Job $job
 
+    # Check for any failure keywords in the output
     if ($output -match "Error|Exception|Failed|self intersecting") {
         Write-Host "`n❌ $name failed to convert" -ForegroundColor Red
-        Write-Host "   ↳ Details:" -ForegroundColor DarkRed
-        Write-Host ("   " + ($output -join "`n   "))
+        Write-Indented "↳ Details:" 1 Red
+        $output | ForEach-Object { Write-Indented $_ 2 Magenta }
         $failedJobs += $name
     }
 }
