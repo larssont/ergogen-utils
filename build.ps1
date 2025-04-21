@@ -44,7 +44,6 @@ Specifies an optional directory for the backup. If provided, it triggers the bac
 - Requires `ergogen` or a valid CLI path to be available.
 - Automatically installs `@jscad/cli@1.10` globally if not found.
 - Uses PowerShell jobs to convert `.jscad` files to `.stl` in parallel.
-
 #>
 
 
@@ -125,8 +124,13 @@ if (-not $outDir) {
     $outDir = Join-Path $projectDir "output"
 }
 
+# Validate that paths exist
 if (-not (Test-Path $projectDir)) {
-    Write-Error "❌ Project path not found: $projectDir"
+    Write-Error "❌ Project directory not found: $projectDir"
+    exit 1
+}
+if (-not (Test-Path $outDir)) {
+    Write-Error "❌ Output directory not found: $projectDir"
     exit 1
 }
 
