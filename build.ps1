@@ -129,10 +129,6 @@ if (-not (Test-Path $projectDir)) {
     Write-Error "❌ Project directory not found: $projectDir"
     exit 1
 }
-if (-not (Test-Path $outDir)) {
-    Write-Error "❌ Output directory not found: $projectDir"
-    exit 1
-}
 
 # Build Ergogen arguments
 $args = @()
